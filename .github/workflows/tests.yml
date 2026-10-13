@@ -55,7 +55,24 @@ jobs:
         working-directory: work/guzzle
         run: FI_DRIVER=generic vendor/bin/phpunit
 
-      # The phasync extension is not available on CI, so phasync runs the generic pass only.
+      # phasync/phasync (installed by composer above) bundles prebuilt extension binaries in
+      # vendor/phasync/phasync/ext/. The adapter behaves differently with the extension loaded, so
+      # phasync runs the generic pass again with it, then the native pass. The extension's free
+      # tier prints notices on stderr; that is expected.
+      - name: Tests, generic MultiDriver, phasync extension loaded
+        if: matrix.runtime == 'phasync'
+        working-directory: work/guzzle
+        run: |
+          EXT="$PWD/vendor/phasync/phasync/ext/phasync-$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')-nts-x86_64-glibc.so"
+          FI_DRIVER=generic php -d extension="$EXT" vendor/bin/phpunit
+
+      - name: Tests, native driver, phasync extension loaded
+        if: matrix.runtime == 'phasync'
+        working-directory: work/guzzle
+        run: |
+          EXT="$PWD/vendor/phasync/phasync/ext/phasync-$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')-nts-x86_64-glibc.so"
+          FI_DRIVER=native php -d extension="$EXT" vendor/bin/phpunit
+
       # Swoole runs the native pass when the build above has native curl hooking.
       - name: Tests, native driver
         if: matrix.runtime == 'swoole'
