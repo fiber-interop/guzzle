@@ -1,0 +1,68 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [revolt, amp, react, phasync, swoole]
+    env:
+      FI_RUNTIME: ${{ matrix.runtime }}
+      # setup-php compiles PECL extensions with <EXT>_CONFIGURE_OPTS when set. Swoole needs
+      # --enable-swoole-curl for SWOOLE_HOOK_NATIVE_CURL (the native driver); without it the
+      # adapter registers no curl driver and only the generic MultiDriver pass runs.
+      SWOOLE_CONFIGURE_OPTS: --enable-swoole-curl
+    steps:
+      # composer.json uses path repositories to ../curl, ../api, ../scope and the adapters, so every repo is
+      # checked out as a sibling in work/ (same trick as fiber-interop.github.io's pages workflow).
+      - uses: actions/checkout@v4
+        with: { path: work/guzzle }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/curl, path: work/curl, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/api, path: work/api, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/scope, path: work/scope, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/revolt, path: work/revolt, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/amp, path: work/amp, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/react, path: work/react, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/phasync, path: work/phasync, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: fiber-interop/swoole, path: work/swoole, fetch-depth: 0 }
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: curl, mbstring${{ matrix.runtime == 'swoole' && ', swoole' || '' }}
+          tools: composer
+          coverage: none
+
+      - name: Install
+        working-directory: work/guzzle
+        run: composer update --no-interaction --no-progress
+
+      - name: Tests, generic MultiDriver
+        working-directory: work/guzzle
+        run: FI_DRIVER=generic vendor/bin/phpunit
+
+      # The phasync extension is not available on CI, so phasync runs the generic pass only.
+      # Swoole runs the native pass when the build above has native curl hooking.
+      - name: Tests, native driver
+        if: matrix.runtime == 'swoole'
+        working-directory: work/guzzle
+        run: |
+          if php -r 'exit(defined("SWOOLE_HOOK_NATIVE_CURL") && (SWOOLE_HOOK_ALL & SWOOLE_HOOK_NATIVE_CURL) ? 0 : 1);'; then
+            FI_DRIVER=native vendor/bin/phpunit
+          else
+            echo "::notice::Swoole was built without --enable-swoole-curl; native driver pass skipped."
+          fi
