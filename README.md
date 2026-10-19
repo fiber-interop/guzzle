@@ -48,6 +48,35 @@ from its Composer autoload, so `composer require` alone would be enough. That is
 - `async\guzzle\client(array $config = []): GuzzleHttp\Client` — `$config` with `handler`
   defaulting to `HandlerStack::create(new Handler())`.
 
+## Streaming responses
+
+With `'stream' => true` inside `async\run()`, the request returns as soon as the response headers
+are in, and the body is read while the transfer runs:
+
+```php
+async\run(function () {
+    $response = async\guzzle\client()->get('https://example.com/big.ndjson', ['stream' => true]);
+    $body = $response->getBody();
+    while (!$body->eof()) {
+        handle($body->read(8192));   // suspends this task until data arrives; other tasks run
+    }
+});
+```
+
+- The body is fed from curl's write callback. With the generic `MultiDriver`, the transfer is
+  paused while more than 1 MiB is buffered unread, so a slow reader does not grow memory. A native
+  driver runs a cooperative `curl_exec()` that does not resume after `curl_pause()`, so there the
+  body is buffered without that limit.
+- A transfer error after the headers (for example a connection cut mid-body, cURL error 18) is
+  thrown from `read()` once the data received before it is consumed, as Guzzle's
+  `RequestException`. `on_headers` and `on_stats` work as usual.
+- The body is not seekable and has no size.
+- Outside `run()`, or with a `sink` option, `stream` is ignored and the body is buffered as with
+  `CurlHandler`.
+- Cancelling the promise, or abandoning the body, does not abort the transfer; it keeps running
+  in the background and `run()` waits for it. An abandoned body that is paused at 1 MiB never
+  finishes, so call `$body->close()` on a body you stop reading: the rest is then discarded.
+
 ## How it waits
 
 As fiber-interop/curl does: through a native driver where the runtime has one (phasync with the

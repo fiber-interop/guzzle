@@ -4,6 +4,7 @@ namespace async\guzzle\Tests;
 
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\ClientException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Promise\Utils;
 use PHPUnit\Framework\TestCase;
 use function async\{run, go, await_all};
@@ -87,5 +88,103 @@ final class GuzzleTest extends TestCase
     {
         $this->expectException(ConnectException::class);
         \async\guzzle\client()->get('http://127.0.0.1:1/');
+    }
+
+    /** Reads the body in 64-byte reads, recording [seconds since $t0, chunk] for each. */
+    private static function readTimed($body, float $t0): array
+    {
+        $chunks = [];
+        while (!$body->eof()) {
+            $chunk = $body->read(64);
+            if ($chunk !== '') {
+                $chunks[] = [microtime(true) - $t0, $chunk];
+            }
+        }
+        return $chunks;
+    }
+
+    public function testStreamReturnsAtHeadersAndChunksArriveIncrementally(): void
+    {
+        // 5 chunks 300 ms apart: the body takes 1.2 s, the headers come with the first chunk.
+        [$headersAt, $chunks] = run(function () {
+            $t0 = microtime(true);
+            $r = self::client()->get('/chunks?n=5&ms=300', ['stream' => true]);
+            $headersAt = microtime(true) - $t0;
+            $this->assertSame(200, $r->getStatusCode());
+            return [$headersAt, self::readTimed($r->getBody(), $t0)];
+        });
+        $this->assertSame('chunk0chunk1chunk2chunk3chunk4', implode('', array_column($chunks, 1)));
+        $this->assertLessThan(0.6, $headersAt, 'headers should not wait for the 1.2 s body');
+        $this->assertGreaterThanOrEqual(3, count($chunks), 'body should arrive in several reads');
+        $this->assertGreaterThan(0.8, end($chunks)[0] - $chunks[0][0], 'reads should be spread over the transfer');
+    }
+
+    public function testStreamKeepsOnHeadersCallbackAndOtherTasksRun(): void
+    {
+        $seen = null;
+        $ticks = 0;
+        $body = run(function () use (&$seen, &$ticks) {
+            go(function () use (&$ticks) { for ($i = 0; $i < 5; $i++) { \async\sleep(0.05); $ticks++; } });
+            $r = self::client()->get('/chunks?n=3&ms=200', [
+                'stream' => true,
+                'on_headers' => function ($response) use (&$seen) { $seen = $response->getStatusCode(); },
+            ]);
+            return $r->getBody()->getContents();
+        });
+        $this->assertSame('chunk0chunk1chunk2', $body);
+        $this->assertSame(200, $seen);
+        $this->assertSame(5, $ticks);
+    }
+
+    public function testStreamTruncatedBodyThrowsFromRead(): void
+    {
+        $result = run(function () {
+            $r = self::client()->get('/chunks?n=2&ms=100&trunc=1', ['stream' => true]);
+            $got = '';
+            try {
+                while (!$r->getBody()->eof()) {
+                    $got .= $r->getBody()->read(1024);
+                }
+            } catch (RequestException $e) {
+                return [$got, $e];
+            }
+            return [$got, null];
+        });
+        [$got, $e] = $result;
+        $this->assertSame('chunk0chunk1', $got, 'the data before the error is delivered');
+        $this->assertInstanceOf(RequestException::class, $e);
+        $this->assertStringContainsString('cURL error 18', $e->getMessage());
+    }
+
+    public function testWithoutStreamTheBodyIsBufferedAsBefore(): void
+    {
+        [$elapsed, $body] = run(function () {
+            $t0 = microtime(true);
+            $r = self::client()->get('/chunks?n=3&ms=200');
+            $elapsed = microtime(true) - $t0;
+            $this->assertNotInstanceOf(\async\guzzle\StreamingBody::class, $r->getBody());
+            $this->assertTrue($r->getBody()->isSeekable());
+            return [$elapsed, (string) $r->getBody()];
+        });
+        $this->assertSame('chunk0chunk1chunk2', $body);
+        $this->assertGreaterThan(0.35, $elapsed, 'without stream the promise waits for the whole body');
+    }
+
+    public function testStreamLargeBodyWithSlowReaderAndClose(): void
+    {
+        // 8 MiB with nobody reading for 0.3 s: the generic driver pauses at 1 MiB and resumes.
+        [$full, $partial] = run(function () {
+            $r = self::client()->get('/big', ['stream' => true]);
+            \async\sleep(0.3);
+            $full = strlen($r->getBody()->getContents());
+            // close() after a partial read lets the rest drain, so run() can return.
+            $r = self::client()->get('/big', ['stream' => true]);
+            \async\sleep(0.3);
+            $partial = strlen($r->getBody()->read(10));
+            $r->getBody()->close();
+            return [$full, $partial];
+        });
+        $this->assertSame(8 << 20, $full);
+        $this->assertSame(10, $partial);
     }
 }
