@@ -1,7 +1,7 @@
 # fiber-interop/guzzle
 
 A [Guzzle](https://github.com/guzzle/guzzle) handler for [fiber-interop/api](https://github.com/fiber-interop/api):
-inside `async\run()` each request suspends only the task that waits for it, on whichever adapter is
+inside `fiber\run()` each request suspends only the task that waits for it, on whichever adapter is
 installed. Transfers go through [fiber-interop/curl](https://github.com/fiber-interop/curl).
 
 ```
@@ -9,9 +9,9 @@ composer require fiber-interop/guzzle
 ```
 
 ```php
-use function async\{run, go, await_all};
+use function fiber\{run, go, await_all};
 
-$client = async\guzzle\client(['base_uri' => 'https://example.com']);
+$client = fiber\guzzle\client(['base_uri' => 'https://example.com']);
 
 $bodies = run(fn() => await_all(array_map(
     fn($path) => go(fn() => (string) $client->get($path)->getBody()),
@@ -26,10 +26,10 @@ created in one task overlap, and `wait()` suspends that task only.
 
 Guzzle picks its default handler in `GuzzleHttp\Utils::chooseHandler()`, a static method with no
 override, so installing a package cannot change what `new GuzzleHttp\Client()` uses. Today you
-create the client with `async\guzzle\client($config)`, or pass the handler yourself:
+create the client with `fiber\guzzle\client($config)`, or pass the handler yourself:
 
 ```php
-new GuzzleHttp\Client(['handler' => GuzzleHttp\HandlerStack::create(new async\guzzle\Handler())]);
+new GuzzleHttp\Client(['handler' => GuzzleHttp\HandlerStack::create(new fiber\guzzle\Handler())]);
 ```
 
 A `Utils::setDefaultHandler()` (or similar hook) in Guzzle would let this package install itself
@@ -37,25 +37,25 @@ from its Composer autoload, so `composer require` alone would be enough. That is
 
 ## API
 
-- `async\guzzle\Handler` — a callable handler `(RequestInterface, array $options): PromiseInterface`
+- `fiber\guzzle\Handler` — a callable handler `(RequestInterface, array $options): PromiseInterface`
   with the structure of Guzzle's `CurlHandler` (`CurlFactory::create()`, the transfer, `errno`,
   `CurlFactory::finish()`), so responses, errors, redirects, `on_stats`, `sink` and the
-  `ConnectException`/`RequestException` mapping are Guzzle's own. Inside `async\run()` it calls
-  `async\curl\start()` when the request is sent and returns a promise whose `wait()` awaits the
+  `ConnectException`/`RequestException` mapping are Guzzle's own. Inside `fiber\run()` it calls
+  `fiber\curl\start()` when the request is sent and returns a promise whose `wait()` awaits the
   transfer. Outside `run()` it is exactly `CurlHandler`: a blocking `curl_exec()`.
-  The `delay` option is honoured with `async\sleep()` in a task, so it delays that request only.
+  The `delay` option is honoured with `fiber\sleep()` in a task, so it delays that request only.
   Constructor option: `handle_factory` (a `CurlFactoryInterface`), as with `CurlHandler`.
-- `async\guzzle\client(array $config = []): GuzzleHttp\Client` — `$config` with `handler`
+- `fiber\guzzle\client(array $config = []): GuzzleHttp\Client` — `$config` with `handler`
   defaulting to `HandlerStack::create(new Handler())`.
 
 ## Streaming responses
 
-With `'stream' => true` inside `async\run()`, the request returns as soon as the response headers
+With `'stream' => true` inside `fiber\run()`, the request returns as soon as the response headers
 are in, and the body is read while the transfer runs:
 
 ```php
-async\run(function () {
-    $response = async\guzzle\client()->get('https://example.com/big.ndjson', ['stream' => true]);
+fiber\run(function () {
+    $response = fiber\guzzle\client()->get('https://example.com/big.ndjson', ['stream' => true]);
     $body = $response->getBody();
     while (!$body->eof()) {
         handle($body->read(8192));   // suspends this task until data arrives; other tasks run
@@ -81,7 +81,7 @@ async\run(function () {
 
 As fiber-interop/curl does: through a native driver where the runtime has one (phasync with the
 phasync extension, Swoole with native curl hooking), otherwise through the generic `MultiDriver`,
-which polls a shared `curl_multi` handle with `async\sleep()` (1–10 ms adaptive). PHP exposes no
+which polls a shared `curl_multi` handle with `fiber\sleep()` (1–10 ms adaptive). PHP exposes no
 file descriptor for `curl_multi`, so there is nothing to hand to the event loop; see
 [fiber-interop/curl](https://github.com/fiber-interop/curl#how-it-waits-polling-honestly).
 

@@ -1,6 +1,6 @@
 <?php
 
-namespace async\guzzle;
+namespace fiber\guzzle;
 
 use GuzzleHttp\Exception\TransferException;
 use Psr\Http\Message\StreamInterface;
@@ -22,7 +22,7 @@ final class StreamingBody implements StreamInterface
     private bool $paused = false;
     private bool $closed = false;
     private ?\Throwable $error = null;
-    private ?\async\Deferred $wake = null;
+    private ?\fiber\Deferred $wake = null;
 
     public ?\CurlHandle $handle = null;
 
@@ -35,7 +35,7 @@ final class StreamingBody implements StreamInterface
 
     public function __construct()
     {
-        $this->pausable = \async\curl\driver() instanceof \async\curl\MultiDriver;
+        $this->pausable = \fiber\curl\driver() instanceof \fiber\curl\MultiDriver;
     }
 
     /** curl write callback. */
@@ -64,8 +64,8 @@ final class StreamingBody implements StreamInterface
     public function read(int $length): string
     {
         while ($this->buffer === '' && !$this->ended) {
-            $this->wake = new \async\Deferred();
-            \async\await($this->wake);
+            $this->wake = new \fiber\Deferred();
+            \fiber\await($this->wake);
         }
         if ($this->buffer === '' && $this->error !== null) {
             // CurlFactory::finish() rejects with a RequestException (PSR-18), e.g. cURL error 18.

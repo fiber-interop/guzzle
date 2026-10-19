@@ -1,6 +1,6 @@
 <?php
 
-namespace async\guzzle;
+namespace fiber\guzzle;
 
 use GuzzleHttp\Handler\CurlFactory;
 use GuzzleHttp\Handler\CurlFactoryInterface;
@@ -10,10 +10,10 @@ use GuzzleHttp\Promise\PromiseInterface;
 use Psr\Http\Message\RequestInterface;
 
 /**
- * Guzzle handler that runs each transfer through async\curl\start(). Structure follows
+ * Guzzle handler that runs each transfer through fiber\curl\start(). Structure follows
  * GuzzleHttp\Handler\CurlHandler: CurlFactory::create(), the transfer, errno, CurlFactory::finish().
  *
- * Inside async\run() the transfer starts immediately when the request is sent and the returned
+ * Inside fiber\run() the transfer starts immediately when the request is sent and the returned
  * promise's wait() suspends only the calling task. Outside run() it is exactly CurlHandler: a
  * blocking curl_exec().
  */
@@ -30,7 +30,7 @@ final class Handler
     public function __invoke(RequestInterface $request, array $options): PromiseInterface
     {
         HostValidator::assertRequestHost($request);
-        $inRun = \async\Registry::$active !== [];
+        $inRun = \fiber\Registry::$active !== [];
 
         if (!$inRun) {
             if (isset($options['delay'])) {
@@ -46,7 +46,7 @@ final class Handler
         // StreamingBody fed while the transfer runs. $ready settles on the headers or on completion.
         $body = $ready = null;
         if (!empty($options['stream']) && !isset($options['sink'])) {
-            $ready = new \async\Deferred();
+            $ready = new \fiber\Deferred();
             $options['sink'] = $body = new StreamingBody();
             $onHeaders = $options['on_headers'] ?? null;
             $options['on_headers'] = static function ($response) use ($onHeaders, $ready): void {
@@ -66,13 +66,13 @@ final class Handler
             if ($body !== null) {
                 $body->handle = $easy->handle;
             }
-            $t = \async\curl\start($easy->handle);
+            $t = \fiber\curl\start($easy->handle);
             if ($ready !== null) {
                 // Native drivers return a task, not a then-able, so a task watches for completion.
                 // A failed transfer only settles $ready here; the normal path below reports it.
-                \async\go(static function () use ($t, $ready): void {
+                \fiber\go(static function () use ($t, $ready): void {
                     try {
-                        \async\await($t);
+                        \fiber\await($t);
                     } catch (\Throwable) {
                     }
                     $ready->settle(true, 'done');
@@ -81,18 +81,18 @@ final class Handler
             return $t;
         };
         $transfer = isset($options['delay']) && $options['delay'] > 0
-            ? \async\go(static function () use ($begin, $options) {
-                \async\sleep($options['delay'] / 1000);
-                return \async\await($begin());
+            ? \fiber\go(static function () use ($begin, $options) {
+                \fiber\sleep($options['delay'] / 1000);
+                return \fiber\await($begin());
             })
             : $begin();
 
         $promise = new Promise(function () use (&$promise, &$easy, $transfer, $body, $ready): void {
-            if ($body !== null && \async\await($ready) === 'headers') {
+            if ($body !== null && \fiber\await($ready) === 'headers') {
                 // Finish in the background so a read() sees the end, or the error, of the transfer.
-                \async\go(function () use ($easy, $transfer, $body): void {
+                \fiber\go(function () use ($easy, $transfer, $body): void {
                     try {
-                        \async\await($transfer);
+                        \fiber\await($transfer);
                         $easy->errno = \curl_errno($easy->handle);
                         CurlFactory::finish($this, $easy, $this->factory)->wait();
                         $body->end(null);
@@ -103,7 +103,7 @@ final class Handler
                 $promise->resolve($easy->response);
                 return;
             }
-            \async\await($transfer);
+            \fiber\await($transfer);
             $easy->errno = \curl_errno($easy->handle);
             $promise->resolve(CurlFactory::finish($this, $easy, $this->factory));
         });

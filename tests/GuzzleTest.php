@@ -1,19 +1,19 @@
 <?php
 
-namespace async\guzzle\Tests;
+namespace fiber\guzzle\Tests;
 
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Promise\Utils;
 use PHPUnit\Framework\TestCase;
-use function async\{run, go, await_all};
+use function fiber\{run, go, await_all};
 
 final class GuzzleTest extends TestCase
 {
     private static function client(): \GuzzleHttp\Client
     {
-        return \async\guzzle\client(['base_uri' => FI_BASE]);
+        return \fiber\guzzle\client(['base_uri' => FI_BASE]);
     }
 
     public function testSyncOutsideRun(): void
@@ -53,7 +53,7 @@ final class GuzzleTest extends TestCase
     {
         $ticks = 0;
         run(function () use (&$ticks) {
-            go(function () use (&$ticks) { for ($i = 0; $i < 5; $i++) { \async\sleep(0.02); $ticks++; } });
+            go(function () use (&$ticks) { for ($i = 0; $i < 5; $i++) { \fiber\sleep(0.02); $ticks++; } });
             self::client()->get('/slow?ms=200');
             $this->assertSame(5, $ticks);
         });
@@ -81,13 +81,13 @@ final class GuzzleTest extends TestCase
     public function testConnectErrorIsConnectException(): void
     {
         $this->expectException(ConnectException::class);
-        run(fn() => \async\guzzle\client()->get('http://127.0.0.1:1/', ['connect_timeout' => 2]));
+        run(fn() => \fiber\guzzle\client()->get('http://127.0.0.1:1/', ['connect_timeout' => 2]));
     }
 
     public function testErrorsOutsideRunToo(): void
     {
         $this->expectException(ConnectException::class);
-        \async\guzzle\client()->get('http://127.0.0.1:1/');
+        \fiber\guzzle\client()->get('http://127.0.0.1:1/');
     }
 
     /** Reads the body in 64-byte reads, recording [seconds since $t0, chunk] for each. */
@@ -124,7 +124,7 @@ final class GuzzleTest extends TestCase
         $seen = null;
         $ticks = 0;
         $body = run(function () use (&$seen, &$ticks) {
-            go(function () use (&$ticks) { for ($i = 0; $i < 5; $i++) { \async\sleep(0.05); $ticks++; } });
+            go(function () use (&$ticks) { for ($i = 0; $i < 5; $i++) { \fiber\sleep(0.05); $ticks++; } });
             $r = self::client()->get('/chunks?n=3&ms=200', [
                 'stream' => true,
                 'on_headers' => function ($response) use (&$seen) { $seen = $response->getStatusCode(); },
@@ -162,7 +162,7 @@ final class GuzzleTest extends TestCase
             $t0 = microtime(true);
             $r = self::client()->get('/chunks?n=3&ms=200');
             $elapsed = microtime(true) - $t0;
-            $this->assertNotInstanceOf(\async\guzzle\StreamingBody::class, $r->getBody());
+            $this->assertNotInstanceOf(\fiber\guzzle\StreamingBody::class, $r->getBody());
             $this->assertTrue($r->getBody()->isSeekable());
             return [$elapsed, (string) $r->getBody()];
         });
@@ -175,11 +175,11 @@ final class GuzzleTest extends TestCase
         // 8 MiB with nobody reading for 0.3 s: the generic driver pauses at 1 MiB and resumes.
         [$full, $partial] = run(function () {
             $r = self::client()->get('/big', ['stream' => true]);
-            \async\sleep(0.3);
+            \fiber\sleep(0.3);
             $full = strlen($r->getBody()->getContents());
             // close() after a partial read lets the rest drain, so run() can return.
             $r = self::client()->get('/big', ['stream' => true]);
-            \async\sleep(0.3);
+            \fiber\sleep(0.3);
             $partial = strlen($r->getBody()->read(10));
             $r->getBody()->close();
             return [$full, $partial];

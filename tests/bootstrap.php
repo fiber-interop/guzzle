@@ -10,16 +10,16 @@ if (!class_exists('Scope')) {
 
 $runtime = getenv('FI_RUNTIME') ?: 'revolt';
 $class = 'FiberInterop\\' . ucfirst($runtime) . '\\Adapter';
-async\setup(new $class());
+fiber\setup(new $class());
 
 $driver = getenv('FI_DRIVER') ?: 'generic';
 if ($driver === 'generic') {
-    async\curl\setup(new async\curl\MultiDriver());
-} elseif (async\curl\Registry::$candidates === []) {
-    fwrite(STDERR, "No native async\\curl driver registered for $runtime\n");
+    fiber\curl\setup(new fiber\curl\MultiDriver());
+} elseif (fiber\curl\Registry::$candidates === []) {
+    fwrite(STDERR, "No native fiber\\curl driver registered for $runtime\n");
     exit(1);
 }
-fwrite(STDERR, "runtime=$runtime driver=" . get_class(async\curl\driver()) . "\n");
+fwrite(STDERR, "runtime=$runtime driver=" . get_class(fiber\curl\driver()) . "\n");
 
 $port = 19000 + getmypid() % 1000;
 define('FI_BASE', "http://127.0.0.1:$port");
